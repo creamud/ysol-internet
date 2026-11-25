@@ -31,13 +31,14 @@ YSOL INTERNET, kendi internet kafeni işlettiğin birinci şahıs 3D simülasyon
 
 ## Yerelde çalıştırma
 
-Repo klasöründe bir HTTP sunucusu başlat:
+Node.js 20.19+ veya 22.12+ ile proje kökünde bağımlılıkları kur ve Vite'ı başlat.
 
 ```sh
-python3 -m http.server 8000
+npm ci
+npm run dev
 ```
 
-[Oyunu](http://localhost:8000/) veya [sahne galerisini](http://localhost:8000/galeri.html) aç. Ek paket kurulumu veya derleme gerekmez. JavaScript modüllerini yüklemek için sayfaları HTTP üzerinden aç.
+[Oyunu](http://127.0.0.1:5173/) veya [sahne galerisini](http://127.0.0.1:5173/galeri.html) aç. Sonraki oturumlarda `npm run dev` yeterli.
 
 ## Otomatik kayıt
 
