@@ -21,10 +21,12 @@
 </div>
 <div id="drive-controls" class="glass" hidden>
   <strong id="drive-speed">0 km/sa</strong>
-  <span>W A S D sür · Space fren · E in</span>
+  <span id="drive-shortcuts">W A S D sür · Space fren · E in</span>
 </div>
 <div id="aim" hidden></div>
 <div id="prompt" class="glass" hidden><kbd>E</kbd><span></span></div>
+<div id="action-hint" class="glass" role="status" hidden><kbd></kbd><span></span></div>
+<p id="walkthrough-hint" class="glass" role="status" hidden></p>
 <button id="phone-trigger" type="button" class="glass" aria-label="Telefonu aç" title="Telefon · P" hidden>▯</button>
 <div id="sleep-fade" aria-hidden="true"></div>
 <div id="overlay" class="naming-view">
@@ -42,6 +44,7 @@
       <button id="resume" type="button" class="glass" aria-label="Devam et" title="Devam et">▶</button>
       <button id="settings-open" type="button" class="glass" aria-label="Ayarlar" title="Ayarlar">⚙</button>
     </div>
+    <button id="walkthrough-toggle" type="button" class="glass">İlk müşteri rehberini aç</button>
   </section>
   <section id="phone" aria-label="Telefon" hidden>
     <div class="phone-island" aria-hidden="true"></div>

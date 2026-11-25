@@ -1,3 +1,6 @@
+import { createGamepadInput, navigateGamepadMenu } from './gamepad.js';
+import { createWalkthrough } from './walkthrough.js';
+import { readProgress, readSettings, writeProgress, writeSettings } from './storage.js';
 import { createArcade } from './arcade.js';
 import { channels } from './television.js';
 import * as THREE from '../vendor/three.module.js';
@@ -6,6 +9,9 @@ import { Player } from './player.js';
 import { clockRate, createCafeState, foodPrice } from './state.js';
 import { createCustomerLoop } from './customer.js';
 import { carPrice, catalog, createShop, decor } from './shop.js';
+import { createShopUi, shippingText } from './shop-ui.js';
+import { createDriving, driveKeys } from './driving.js';
+import { createActionHint } from './action-hint.js';
 import { createSound } from './sound.js';
 
 const select = id => document.getElementById(id);
@@ -16,6 +22,10 @@ const nameForm = select('name-form');
 const nameError = select('name-error');
 const aim = select('aim');
 const prompt = select('prompt');
+const readGamepad = createGamepadInput();
+let lastInput = 'keyboard';
+let gamepadSession = false;
+const updateActionHint = createActionHint(select('action-hint'));
 const settings = select('settings');
 const settingsOpen = select('settings-open');
 const sensitivity = select('sensitivity');
@@ -25,26 +35,15 @@ const music = select('music-volume');
 const sound = createSound();
 const computer = select('computer');
 const canvas = () => renderer.domElement;
-const preferenceKey = 'ysol-internet-controls-v1';
-const progressKey = 'ysol-internet-progress-v1';
-let savedProgress = null;
-try {
-  const save = JSON.parse(localStorage.getItem(progressKey));
-  if (save?.version === 1 && Number.isFinite(save.state?.absoluteTime) &&
-      typeof save.state.cafeName === 'string' && Array.isArray(save.state.stations) &&
-      save.shop && save.scene && save.customers && Array.isArray(save.player?.feet)) savedProgress = save;
-} catch {
-  // A new game is available when progress cannot be read.
-}
-try {
-  const saved = JSON.parse(localStorage.getItem(preferenceKey));
-  if (Number.isFinite(saved?.sensitivity)) sensitivity.value = saved.sensitivity;
-  invertY.checked = saved?.invertY === true;
-  if (Number.isFinite(saved?.volume)) volume.value = saved.volume;
-  if (Number.isFinite(saved?.music)) music.value = saved.music;
-} catch {
-  // The browser can restrict storage for local HTML files.
-}
+const savedProgress = readProgress();
+const walkthrough = createWalkthrough(savedProgress);
+const walkthroughHint = select('walkthrough-hint');
+const walkthroughToggle = select('walkthrough-toggle');
+const savedSettings = readSettings();
+if (Number.isFinite(savedSettings?.sensitivity)) sensitivity.value = savedSettings.sensitivity;
+invertY.checked = savedSettings?.invertY === true;
+if (Number.isFinite(savedSettings?.volume)) volume.value = savedSettings.volume;
+if (Number.isFinite(savedSettings?.music)) music.value = savedSettings.music;
 const clock = select('clock');
 const day = select('day');
 const cash = select('cash');
@@ -76,8 +75,6 @@ let officeOn = false;
 let arcade = null;
 let arcadeKind = null;
 let phoneApp = 'food';
-let shopPage = 'catalog';
-let shopMessage = '';
 let movingFurniture = null;
 let phonePage = 'locked';
 let phoneOrigin = 'play';
@@ -106,12 +103,11 @@ let batEquipped = false;
 let lastStride = 0;
 let pendingLock = false;
 let lockTimer = 0;
-let vehicle = null;
-let vehicleSpeed = 0;
-const driveSpeed = select('drive-speed');
-const chaseCameraPosition = new THREE.Vector3();
 const driveControls = select('drive-controls');
-const driveKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space']);
+const driveShortcuts = select('drive-shortcuts');
+const drivingController = createDriving({
+  player, camera, shadowMap: renderer.shadowMap, driveSpeed: select('drive-speed'), setMode, sound,
+});
 let target = null;
 let energyGainTimer = 0;
 let shopOpenTimer = 0;
@@ -123,6 +119,9 @@ const customers = createCustomerLoop(state, cafe);
 const shop = createShop(state, cafe, order => {
   sound.play(order.kind === 'car' ? 'boot' : 'delivery');
   if (order.kind === 'car') renderer.shadowMap.needsUpdate = true;
+});
+const shopUi = createShopUi({
+  shop, state, money, button, summaryCard, sound, renderApp, renderPhone, syncHud,
 });
 const bat = new THREE.Group();
 const handle = new THREE.Mesh(
@@ -157,17 +156,13 @@ const movementKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'Shif
 
 function saveProgress() {
   if (mode === 'naming') return;
-  try {
-    localStorage.setItem(progressKey, JSON.stringify({
-      version: 1, state: state.snapshot(), shop: shop.snapshot(), scene: cafe.snapshot(),
-      customers: customers.snapshot(),
-      player: { feet: player.feet.toArray(), yaw: player.yaw, pitch: player.pitch, home, coffee,
-        batEquipped, driving: Boolean(vehicle) },
-      television: { channel, tvTime },
-    }));
-  } catch {
-    // Gameplay remains available when browser storage is disabled or full.
-  }
+  writeProgress(() => ({
+    state: state.snapshot(), shop: shop.snapshot(), scene: cafe.snapshot(),
+    customers: customers.snapshot(),
+    player: { feet: player.feet.toArray(), yaw: player.yaw, pitch: player.pitch, home, coffee,
+      batEquipped, driving: drivingController.active },
+    television: { channel, tvTime }, walkthrough: walkthrough.step,
+  }));
 }
 
 function restoreProgress(save) {
@@ -185,8 +180,7 @@ function restoreProgress(save) {
   player.yaw = save.player.yaw;
   player.pitch = save.player.pitch;
   if (save.player.driving && cafe.ownedCar) {
-    vehicle = cafe.ownedCar;
-    updateDriving(0, true);
+    drivingController.restore(cafe.ownedCar);
   } else {
     player.syncCamera();
     camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
@@ -223,6 +217,7 @@ function setMode(next) {
   overlay.classList.toggle('phone-view', next === 'phone');
   overlay.classList.toggle('tv-view', next === 'tv');
   select('pause-screen').hidden = next !== 'pause';
+  syncWalkthrough();
   select('phone').hidden = next !== 'phone';
   select('tv-remote').hidden = next !== 'tv';
   select('phone-trigger').hidden = !['play','pause','phone','desk'].includes(next);
@@ -235,6 +230,7 @@ function setMode(next) {
   aim.hidden = !playing;
   viewport.classList.toggle('playing', playing || driving);
   prompt.hidden = true;
+  updateActionHint(playing ? { coffee, movingFurniture, packageKind: shop.carried?.kind, gamepad: lastInput === 'gamepad' } : {});
   aim.classList.remove('target');
   target = null;
   previousLabel = '';
@@ -267,16 +263,12 @@ function syncSettings() {
 
 function saveSettings() {
   syncSettings();
-  try {
-    localStorage.setItem(preferenceKey, JSON.stringify({
-      sensitivity: Number(sensitivity.value),
-      invertY: invertY.checked,
-      volume: Number(volume.value),
-      music: Number(music.value),
-    }));
-  } catch {
-    // Settings still apply for the current game.
-  }
+  writeSettings({
+    sensitivity: Number(sensitivity.value),
+    invertY: invertY.checked,
+    volume: Number(volume.value),
+    music: Number(music.value),
+  });
 }
 
 function look(dx, dy) {
@@ -298,10 +290,23 @@ function lockFailed() {
   else select('resume').title = 'Fare kilidi açılamadı · Tekrar dene';
 }
 
+function finishNaming() {
+  state.cafeName = cafeNameInput.value.trim().slice(0,26);
+  select('cafe-brand').textContent = state.cafeName;
+  cafe.renameCafe();
+}
+
 function requestPlay() {
   sound.unlock();
+  if (lastInput === 'gamepad') {
+    if (mode === 'naming') finishNaming();
+    gamepadSession = true;
+    if (mode !== 'standing') setMode(drivingController.active ? 'driving' : 'play');
+    return;
+  }
+  gamepadSession = false;
   if (document.pointerLockElement === canvas()) {
-    if (mode !== 'standing') setMode(vehicle ? 'driving' : 'play');
+    if (mode !== 'standing') setMode(drivingController.active ? 'driving' : 'play');
     return;
   }
   if (pendingLock) return;
@@ -318,23 +323,28 @@ document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement === canvas()) {
     pendingLock = false;
     clearTimeout(lockTimer);
-    if (mode === 'naming') {
-      state.cafeName = cafeNameInput.value.trim().slice(0,26);
-      select('cafe-brand').textContent = state.cafeName;
-      cafe.renameCafe();
-    }
+    if (mode === 'naming') finishNaming();
     if (mode === 'phone' && phoneClosing) {
       phoneClosing = false;
       setMode('play');
-    } else if (mode === 'naming' || mode === 'pause') setMode(vehicle ? 'driving' : 'play');
+    } else if (mode === 'naming' || mode === 'pause') setMode(drivingController.active ? 'driving' : 'play');
     else if (mode !== 'play' && mode !== 'driving' && mode !== 'standing') document.exitPointerLock();
   } else if (mode === 'play' || mode === 'driving') {
     setMode('pause');
   }
 });
 document.addEventListener('pointerlockerror', lockFailed);
+window.addEventListener('pointerdown', event => {
+  if (event.isTrusted) lastInput = 'keyboard';
+});
+viewport.addEventListener('click', event => {
+  if (event.isTrusted && gamepadSession && ['play', 'driving'].includes(mode)) requestPlay();
+});
 document.addEventListener('mousemove', event => {
-  if (mode === 'play' && document.pointerLockElement === canvas()) look(event.movementX, event.movementY);
+  if (mode === 'play' && document.pointerLockElement === canvas() && (event.movementX || event.movementY)) {
+    lastInput = 'keyboard';
+    look(event.movementX, event.movementY);
+  }
 });
 window.addEventListener('blur', () => {
   if (mode === 'play' || mode === 'driving') setMode('pause');
@@ -411,6 +421,7 @@ function renderReception(body) {
   const approve = button('Müşteriyi onayla', 'primary', () => {
     const station = nextAvailableStation();
     if (!station || !customers.assign(station.id)) return;
+    walkthrough.admitCustomer();
     sound.play('click');
     syncHud();
     renderApp();
@@ -428,6 +439,7 @@ function renderReception(body) {
   const collect = button(`${customers.sessionPrice} TL tahsil et`, 'primary', () => {
     const collected = customers.collect();
     if (!collected) return;
+    walkthrough.collectPayment();
     sound.play('cash');
     flashCash(collected);
     syncHud();
@@ -441,134 +453,6 @@ function renderReception(body) {
   payment.append(reward);
   overview.append(admission, payment);
   body.append(overview);
-}
-
-const shippingLabels = {
-  preparing: 'Hazırlanıyor', transit: 'Dağıtımda', delivered: 'Teslim noktasında',
-  carried: 'Elinde', installed: 'Kuruldu', parked: 'Kafenin önüne teslim edildi',
-};
-function shippingText(order) {
-  const remaining = order.left > 0 ? ` · ${Math.ceil(order.left)} sn kaldı` : '';
-  return shippingLabels[order.phase] + remaining;
-}
-
-function renderShop(body) {
-  const toolbar = document.createElement('nav');
-  toolbar.className = 'arcade-toolbar';
-  for (const [page,label] of [['catalog','Ürünler'],['basket',`Sepet (${shop.basket.reduce((n,[,q])=>n+q,0)})`],['orders','Siparişler']]) {
-    toolbar.append(button(label, shopPage === page ? 'primary' : 'secondary', () => {
-      shopPage = page;
-      shopMessage = '';
-      renderApp();
-    }));
-  }
-  body.append(toolbar);
-  if (shopMessage) body.append(summaryCard(shopMessage,''));
-  if (shopPage === 'basket' || shopPage === 'checkout') {
-    renderCheckout(body);
-    return;
-  }
-  if (shopPage === 'catalog') {
-    for (const [kind, item] of Object.entries(catalog)) {
-      const line = document.createElement('div');
-      line.className = 'shop-line';
-      const product = document.createElement('div');
-      product.className = 'product-tile';
-      const art = document.createElement('span');
-      art.className = 'product-art';
-      art.textContent = item.icon;
-      art.setAttribute('aria-hidden', 'true');
-      product.append(art, summaryCard(item.name, item.description));
-      line.append(product);
-      if (kind === 'car') line.classList.add('car-product');
-      const buy = button(kind === 'car' && !shop.canAdd(kind) ? (shop.carOrder ? 'Satın alındı' : 'Sepette') : `${money.format(item.price)} TL · Sepete ekle`, 'primary', () => {
-        if (shop.add(kind)) renderApp();
-      });
-      buy.disabled = !shop.canAdd(kind);
-      line.append(buy);
-      body.append(line);
-    }
-    return;
-  }
-  const heading = document.createElement('h3');
-  heading.textContent = 'Siparişler ve kargo';
-  body.append(heading);
-  if (!shop.orders.length) body.append(summaryCard('Sipariş yok', 'Kargolar girişe yakın Kargo Teslim noktasına bırakılır.'));
-  for (const order of shop.orders) {
-    const line = document.createElement('div');
-    line.className = 'shop-line';
-    const name = document.createElement('strong');
-    name.textContent = `#${order.id} · ${catalog[order.kind].name}`;
-    const progress = document.createElement('output');
-    progress.id = `shipping-${order.id}`;
-    progress.textContent = shippingText(order);
-    line.append(name, progress);
-    body.append(line);
-  }
-}
-
-function renderCheckout(body) {
-  if (!shop.basket.length) {
-    body.append(summaryCard('Sepet boş','Ürünler bölümünden bir ürün ekle.'));
-    return;
-  }
-  for (const [kind,quantity] of shop.basket) {
-    const row = summaryCard(`${catalog[kind].icon} ${catalog[kind].name} × ${quantity}`,
-      `${money.format(catalog[kind].price * quantity)} TL`);
-    if (shopPage === 'basket') row.append(button('Bir adet çıkar','secondary',() => {
-      shop.remove(kind);
-      renderApp();
-    }));
-    body.append(row);
-  }
-  body.append(summaryCard(`Toplam · ${money.format(shop.total)} TL`,''));
-  if (shopPage === 'basket') {
-    body.append(button('Ödemeye geç','primary',() => {
-      shopPage = 'checkout';
-      renderApp();
-    }));
-    return;
-  }
-  const card = summaryCard('Kart bilgileri',shop.linked ? 'YSOL Banka · •••• 0417' :
-    shop.pending ? 'Telefonundaki Banka bildirimini onayla.' : 'Ödeme için oyun içi banka kartını bağla.');
-  if (!shop.linked) {
-    const link = button(shop.pending ? 'Onay bekleniyor' : 'Bankanı bağla','primary',() => {
-      if (!shop.requestLink()) return;
-      sound.play('delivery');
-      renderApp();
-    });
-    link.disabled = shop.pending;
-    card.append(link);
-  }
-  const pay = button('Ödemeyi tamamla','primary',() => {
-    if (!shop.checkout()) return;
-    sound.play('cash');
-    shopPage = 'orders';
-    shopMessage = 'Ödeme tamamlandı';
-    syncHud();
-    renderApp();
-  });
-  pay.disabled = !shop.linked || state.cash < shop.total;
-  if (state.cash < shop.total) card.append(summaryCard('Yetersiz bakiye','Sepeti düzenleyebilir veya daha sonra ödeyebilirsin.'));
-  body.append(card,pay);
-}
-
-function renderBank(body) {
-  body.append(summaryCard('YSOL Banka',`Kullanılabilir bakiye · ${money.format(state.cash)} TL`));
-  body.append(summaryCard('Oyun içi banka kartı · •••• 0417',shop.linked ? 'Zamazingo’ya bağlı' : 'Zamazingo’ya bağlı değil'));
-  if (shop.pending) {
-    const request = summaryCard('Zamazingo bağlantı isteği','Kartını bağlamak için bu bildirimi onayla.');
-    request.append(button('Bağlantıyı onayla','primary',() => { shop.approveLink(); renderPhone(); }));
-    request.append(button('Reddet','secondary',() => { shop.unlink(); renderPhone(); }));
-    body.append(request);
-  } else {
-    body.append(button(shop.linked ? 'Zamazingo’dan kartı çıkar' : 'Kartı Zamazingo’ya bağla',
-      shop.linked ? 'secondary' : 'primary',() => {
-        if (shop.linked) shop.unlink();
-        else shop.linkFromBank();
-        renderPhone();
-      }));
-  }
 }
 
 function appSignature() {
@@ -634,7 +518,7 @@ function renderPhone() {
   body.replaceChildren();
   select('phone-clock').textContent = state.time;
   if (phoneApp === 'bank') {
-    renderBank(body);
+    shopUi.renderBank(body);
   } else if (phoneApp === 'bills') {
     renderBills(body, renderPhone);
   } else if (phoneApp === 'weather') {
@@ -766,7 +650,7 @@ function renderApp() {
   select('app-window').hidden = !currentApp;
   if (!currentApp) return;
   select('app-title').textContent = { shop:'Zamazingo', arcade:'Oyunlar', bills:'Fatura', management:'Yönetim' }[currentApp];
-  if (currentApp === 'shop') renderShop(body);
+  if (currentApp === 'shop') shopUi.renderShop(body);
   else if (currentApp === 'arcade') renderArcade(body);
   else if (currentApp === 'bills') renderBills(body, renderApp);
   else renderReception(body);
@@ -874,7 +758,7 @@ function animateSeat(dt) {
   } else {
     if (pendingLock) return;
     player.syncCamera();
-    setMode(document.pointerLockElement === canvas() ? 'play' : 'pause');
+    setMode(gamepadSession || document.pointerLockElement === canvas() ? 'play' : 'pause');
   }
 }
 
@@ -913,66 +797,6 @@ function enterOrLeaveHome() {
   sound.play('apartmentDoor');
 }
 
-function updateDriving(dt, snapCamera = false) {
-  const { car } = vehicle;
-  const throttle = Number(player.keys.has('KeyW')) - Number(player.keys.has('KeyS'));
-  const steer = Number(player.keys.has('KeyA')) - Number(player.keys.has('KeyD'));
-  const braking = player.keys.has('Space');
-  const targetSpeed = braking ? 0 : throttle > 0 ? 11.5 : throttle < 0 ? -4.2 : 0;
-  vehicleSpeed = THREE.MathUtils.lerp(vehicleSpeed, targetSpeed, 1 - Math.exp(-(braking ? 9 : 2.5) * dt));
-  if (Math.abs(vehicleSpeed) < 0.025) vehicleSpeed = 0;
-  const yaw = car.rotation.y + steer * THREE.MathUtils.clamp(vehicleSpeed / 3.5, -0.85, 1) * 1.42 * dt;
-  const x = car.position.x - Math.cos(yaw) * vehicleSpeed * dt;
-  const z = car.position.z + Math.sin(yaw) * vehicleSpeed * dt;
-  if (vehicleSpeed !== 0) {
-    if (!vehicle.move(x, z, yaw)) vehicleSpeed = 0;
-    else renderer.shadowMap.needsUpdate = true;
-  }
-  player.feet.copy(car.position);
-  const c = Math.cos(car.rotation.y);
-  const s = Math.sin(car.rotation.y);
-  chaseCameraPosition.set(car.position.x + c * 4.5, 2.75, car.position.z - s * 4.5);
-  camera.position.lerp(chaseCameraPosition, snapCamera ? 1 : 1 - Math.exp(-12 * dt));
-  camera.lookAt(car.position.x - c * 1.15, 0.75, car.position.z + s * 1.15);
-  const speedLabel = `${Math.round(Math.abs(vehicleSpeed) * 3.6)} km/sa`;
-  if (driveSpeed.textContent !== speedLabel) driveSpeed.textContent = speedLabel;
-}
-
-function enterCar(target) {
-  vehicle = target;
-  vehicleSpeed = 0;
-  player.stop();
-  player.verticalSpeed = 0;
-  setMode('driving');
-  updateDriving(0, true);
-  sound.play('boot');
-}
-
-function leaveCar() {
-  if (Math.abs(vehicleSpeed) > 0.6) return;
-  const { car } = vehicle;
-  const yaw = car.rotation.y;
-  const c = Math.cos(yaw);
-  const s = Math.sin(yaw);
-  const exitOffsets = [[0, 1.24], [0, -1.24], [2, 0], [-2, 0]];
-  for (const [along, side] of exitOffsets) {
-    const x = car.position.x + c * along + s * side;
-    const z = car.position.z - s * along + c * side;
-    if (player.blocked(x, z)) continue;
-    vehicle = null;
-    vehicleSpeed = 0;
-    player.stop();
-    player.feet.set(x, 0, z);
-    player.yaw = Math.atan2(c, -s);
-    player.pitch = -0.05;
-    player.bob = 0;
-    player.syncCamera();
-    camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
-    setMode('play');
-    return;
-  }
-}
-
 function interact() {
   target = cafe.findTarget(camera);
   const kind = shop.carried?.kind;
@@ -998,7 +822,7 @@ function interact() {
   if (!target) return;
   switch (target.type) {
     case 'owned-car':
-      enterCar(target);
+      drivingController.enter(target);
       return;
     case 'business':
       state.open = !state.open;
@@ -1114,52 +938,41 @@ canvas().addEventListener('mousedown', event => {
   }
 });
 
-window.addEventListener('keydown', event => {
-  if (event.code === 'Escape' && !event.repeat) {
-    if (mode === 'desk') leaveSeat(false);
-    else if (mode === 'tv') leaveSeat(false);
+const keyboardActions = {
+  Escape: 'pause', KeyP: 'phone', KeyE: 'interact', KeyC: 'drink',
+  KeyG: 'moveFurniture', KeyR: 'rotate', Space: 'jump',
+};
+
+function performAction(action) {
+  if (action === 'pause') {
+    if (mode === 'desk' || mode === 'tv') leaveSeat(false);
     else if (mode === 'phone') { phoneClosing = false; if (phoneOrigin === 'desk') openPhone(); else setMode('pause'); }
     else if (mode === 'settings' || mode === 'play' || mode === 'driving') setMode('pause');
+    else if (mode === 'pause' && lastInput === 'gamepad') requestPlay();
     return;
   }
   if (mode === 'driving') {
-    if (driveKeys.has(event.code)) {
-      event.preventDefault();
-      player.keys.add(event.code);
-    } else if (event.code === 'KeyE' && !event.repeat) {
-      event.preventDefault();
-      leaveCar();
-    }
+    if (action === 'interact') drivingController.leave();
     return;
   }
-  if (event.code === 'KeyP' && !event.repeat && ['play','pause','phone','desk'].includes(mode)) {
+  if (action === 'phone') {
     openPhone();
     return;
   }
-  if ((mode === 'desk' || mode === 'tv') && event.code === 'KeyE' && !event.repeat) {
-    event.preventDefault();
+  if (action === 'interact' && (mode === 'desk' || mode === 'tv')) {
     leaveSeat(true);
     return;
   }
-  if (mode === 'desk' && arcade?.key(event.code)) { event.preventDefault(); return; }
-  if (mode === 'tv' && ['ArrowLeft','ArrowRight'].includes(event.code)) {
-    event.preventDefault();
-    switchChannel(event.code === 'ArrowLeft' ? -1 : 1);
-    return;
-  }
   if (mode !== 'play') return;
-  if (movementKeys.has(event.code) || event.code === 'KeyE') event.preventDefault();
-  if (movementKeys.has(event.code)) player.keys.add(event.code);
-  if (event.repeat) return;
-  if (event.code === 'KeyE') interact();
-  if (event.code === 'KeyC' && coffee) {
+  if (action === 'interact') interact();
+  if (action === 'drink' && coffee) {
     coffee = false;
     const previousEnergy = state.energy;
     state.drinkCoffee();
     flashEnergy(previousEnergy, true);
     sound.play('sip');
   }
-  if (event.code === 'KeyG') {
+  if (action === 'moveFurniture') {
     if (movingFurniture) {
       movingFurniture = null;
       cafe.previewDesk(null);
@@ -1171,8 +984,42 @@ window.addEventListener('keydown', event => {
       deskAngle = item.slot.angle;
     }
   }
-  if (event.code === 'KeyR' && (movingFurniture || (shop.carried && shop.carried.kind !== 'pc'))) deskAngle = (deskAngle + Math.PI / 2) % (Math.PI * 2);
-  if (event.code === 'Space') player.jump();
+  if (action === 'rotate' && (movingFurniture || (shop.carried && shop.carried.kind !== 'pc'))) deskAngle = (deskAngle + Math.PI / 2) % (Math.PI * 2);
+  if (action === 'jump') player.jump();
+}
+
+window.addEventListener('keydown', event => {
+  lastInput = 'keyboard';
+  const action = keyboardActions[event.code];
+  if (action === 'pause' || (action === 'phone' && mode !== 'driving')) {
+    if (!event.repeat) performAction(action);
+    return;
+  }
+  if (mode === 'driving') {
+    if (driveKeys.has(event.code)) {
+      event.preventDefault();
+      player.keys.add(event.code);
+    } else if (action === 'interact' && !event.repeat) {
+      event.preventDefault();
+      performAction(action);
+    }
+    return;
+  }
+  if (action === 'interact' && (mode === 'desk' || mode === 'tv') && !event.repeat) {
+    event.preventDefault();
+    performAction(action);
+    return;
+  }
+  if (mode === 'desk' && arcade?.key(event.code)) { event.preventDefault(); return; }
+  if (mode === 'tv' && ['ArrowLeft','ArrowRight'].includes(event.code)) {
+    event.preventDefault();
+    switchChannel(event.code === 'ArrowLeft' ? -1 : 1);
+    return;
+  }
+  if (mode !== 'play') return;
+  if (movementKeys.has(event.code) || action === 'interact') event.preventDefault();
+  if (movementKeys.has(event.code)) player.keys.add(event.code);
+  if (!event.repeat && action) performAction(action);
 });
 window.addEventListener('keyup', event => player.keys.delete(event.code));
 window.addEventListener('resize', resize);
@@ -1202,6 +1049,11 @@ nameForm.addEventListener('submit', event => {
   requestPlay();
 });
 select('resume').addEventListener('click', requestPlay);
+walkthroughToggle.addEventListener('click', () => {
+  walkthrough.toggle();
+  syncWalkthrough();
+  saveProgress();
+});
 
 function updateHudAndDesk(dt) {
   if (shopOpenTimer > 0) {
@@ -1274,10 +1126,54 @@ function updateHudAndDesk(dt) {
   }
 }
 
+function syncWalkthrough() {
+  walkthrough.update(state);
+  const goal = lastInput === 'gamepad' ? walkthrough.goal.replaceAll('E ile', 'X / □ ile') : walkthrough.goal;
+  walkthroughHint.hidden = !goal || !['play', 'desk'].includes(mode);
+  if (walkthroughHint.textContent !== goal) walkthroughHint.textContent = goal;
+  const toggleLabel = goal ? 'Rehberi atla' : 'İlk müşteri rehberini aç';
+  if (walkthroughToggle.textContent !== toggleLabel) walkthroughToggle.textContent = toggleLabel;
+}
+
+function updateGamepad(dt) {
+  const input = readGamepad();
+  if (!input) {
+    if (lastInput === 'gamepad') lastInput = 'keyboard';
+    if (gamepadSession) {
+      gamepadSession = false;
+      if ((mode === 'play' || mode === 'driving') && document.pointerLockElement !== canvas()) setMode('pause');
+    }
+    return null;
+  }
+  if (!document.hasFocus()) return null;
+  if (input.active) lastInput = 'gamepad';
+  const { pressed } = input;
+  if (pressed.pause) performAction('pause');
+  else if (pressed.phone) performAction('phone');
+  else if (pressed.back && mode === 'phone') {
+    if (phonePage === 'app') select('phone-app-back').click();
+    else performAction('phone');
+  } else if (pressed.back) performAction('pause');
+  else if (pressed.interact) performAction('interact');
+  else if (mode === 'play') {
+    if (pressed.confirm) performAction('jump');
+    for (const action of ['drink', 'rotate', 'moveFurniture']) {
+      if (pressed[action]) performAction(action);
+    }
+  } else if (mode === 'naming' && pressed.confirm && cafeNameInput.value.trim()) nameForm.requestSubmit();
+  else {
+    const menus = { pause: 'pause-screen', settings: 'settings', phone: 'phone', desk: 'computer', tv: 'tv-remote' };
+    if (menus[mode]) navigateGamepadMenu(select(menus[mode]), pressed);
+  }
+  if (mode === 'play' && (input.lookX || input.lookY)) look(input.lookX * 950 * dt, input.lookY * 950 * dt);
+  return input;
+}
+
 function frame(timestamp) {
   requestAnimationFrame(frame);
   const dt = lastTime === null ? 0 : Math.min((timestamp - lastTime) / 1000, 0.05);
   lastTime = timestamp;
+  const gamepad = updateGamepad(dt);
   if (mode === 'sitting' || mode === 'standing') animateSeat(dt);
   if (!['play','driving','desk','tv','phone','sitting','standing'].includes(mode)) return;
   if (mode === 'desk') arcade?.update(dt);
@@ -1286,10 +1182,17 @@ function frame(timestamp) {
   if (mode === 'phone') syncPhoneClock();
   else select('phone-trigger').classList.toggle('bank-pending',shop.pending);
   sound.updateMusic(true);
-  if (mode === 'driving') updateDriving(dt);
+  if (mode === 'driving') {
+    const shortcuts = lastInput === 'gamepad'
+      ? 'Sol çubuk · RT / R2 ileri · LT / L2 geri · A / × fren · X / □ in'
+      : 'W A S D sür · Space fren · E in';
+    if (driveShortcuts.textContent !== shortcuts) driveShortcuts.textContent = shortcuts;
+    drivingController.update(dt, false, gamepad);
+  }
   if (mode === 'play') {
     player.energyFactor = 0.65 + state.energy * 0.0035;
-    player.update(dt);
+    updateActionHint({ coffee, movingFurniture, packageKind: shop.carried?.kind, gamepad: lastInput === 'gamepad' });
+    player.update(dt, gamepad);
     const kind = movingFurniture?.kind ?? shop.carried?.kind;
     candidate = cafe.previewDesk(kind === 'desk' || decor[kind] ? camera : null, player, deskAngle, kind, movingFurniture);
     if (player.verticalSpeed === 0 && player.stride - lastStride > 3.9) {
@@ -1315,6 +1218,7 @@ function frame(timestamp) {
   }
   state.advance(dt);
   updateHudAndDesk(dt);
+  syncWalkthrough();
   saveElapsed += dt;
   if (saveElapsed >= 2) {
     saveElapsed = 0;
@@ -1330,11 +1234,16 @@ function frame(timestamp) {
         : shop.carried && candidate ? 'Yerleştir · R döndür'
         : target?.furniture ? `${target.label?.() ?? catalog[target.furniture.kind].name} · G taşı`
         : target?.label() ?? '';
-      if (label !== previousLabel) {
-        prompt.querySelector('span').textContent = label;
+      const gamepadPrompt = lastInput === 'gamepad';
+      const promptKey = prompt.querySelector('kbd');
+      const shortcut = gamepadPrompt ? 'X / □' : 'E';
+      if (promptKey.textContent !== shortcut) promptKey.textContent = shortcut;
+      const visibleLabel = gamepadPrompt ? label.replaceAll(' · R ', ' · LB / L1 ').replaceAll(' · G ', ' · RB / R1 ') : label;
+      if (visibleLabel !== previousLabel) {
+        prompt.querySelector('span').textContent = visibleLabel;
         prompt.hidden = !label;
         aim.classList.toggle('target', !!label);
-        previousLabel = label;
+        previousLabel = visibleLabel;
       }
     }
   }
