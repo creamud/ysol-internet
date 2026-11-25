@@ -29,6 +29,16 @@ YSOL INTERNET, kendi internet kafeni işlettiğin birinci şahıs 3D simülasyon
 | Space | Zıpla veya araçla fren yap |
 | Esc | Duraklat |
 
+## Yerelde çalıştırma
+
+Repo klasöründe bir HTTP sunucusu başlat:
+
+```sh
+python3 -m http.server 8000
+```
+
+[Oyunu](http://localhost:8000/) veya [sahne galerisini](http://localhost:8000/galeri.html) aç. Ek paket kurulumu veya derleme gerekmez. JavaScript modüllerini yüklemek için sayfaları HTTP üzerinden aç.
+
 ## Otomatik kayıt
 
 Oyun kafe adını, paranı, saati, aldığın eşyaları, siparişlerini ve aktif seansları tarayıcı profiline otomatik kaydeder. Aynı adresi aynı tarayıcı profiliyle yeniden açınca **Devam et** düğmesiyle oyuna dönebilirsin. Kayıtlar cihazlar arasında eşitlenmez. Site verilerini silmek ilerlemeni siler.

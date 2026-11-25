@@ -1,0 +1,4 @@
+body{margin:0;background:#151b23;color:#fff;font:15px system-ui}
+canvas{display:block;width:100vw;height:100vh}
+nav{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);display:flex;gap:8px;background:#151b23d9;padding:8px;border-radius:12px}
+nav a{padding:3px 12px;color:white;text-decoration:none;white-space:nowrap}nav a[aria-current]{background:#49627d;border-radius:7px}
