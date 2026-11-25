@@ -1,3 +1,4 @@
+import { createWalkthrough } from './walkthrough.js';
 import { readProgress, readSettings, writeProgress, writeSettings } from './storage.js';
 import { createArcade } from './arcade.js';
 import { channels } from './television.js';
@@ -31,6 +32,9 @@ const sound = createSound();
 const computer = select('computer');
 const canvas = () => renderer.domElement;
 const savedProgress = readProgress();
+const walkthrough = createWalkthrough(savedProgress);
+const walkthroughHint = select('walkthrough-hint');
+const walkthroughToggle = select('walkthrough-toggle');
 const savedSettings = readSettings();
 if (Number.isFinite(savedSettings?.sensitivity)) sensitivity.value = savedSettings.sensitivity;
 invertY.checked = savedSettings?.invertY === true;
@@ -152,7 +156,7 @@ function saveProgress() {
     customers: customers.snapshot(),
     player: { feet: player.feet.toArray(), yaw: player.yaw, pitch: player.pitch, home, coffee,
       batEquipped, driving: drivingController.active },
-    television: { channel, tvTime },
+    television: { channel, tvTime }, walkthrough: walkthrough.step,
   }));
 }
 
@@ -208,6 +212,7 @@ function setMode(next) {
   overlay.classList.toggle('phone-view', next === 'phone');
   overlay.classList.toggle('tv-view', next === 'tv');
   select('pause-screen').hidden = next !== 'pause';
+  syncWalkthrough();
   select('phone').hidden = next !== 'phone';
   select('tv-remote').hidden = next !== 'tv';
   select('phone-trigger').hidden = !['play','pause','phone','desk'].includes(next);
@@ -393,6 +398,7 @@ function renderReception(body) {
   const approve = button('Müşteriyi onayla', 'primary', () => {
     const station = nextAvailableStation();
     if (!station || !customers.assign(station.id)) return;
+    walkthrough.admitCustomer();
     sound.play('click');
     syncHud();
     renderApp();
@@ -410,6 +416,7 @@ function renderReception(body) {
   const collect = button(`${customers.sessionPrice} TL tahsil et`, 'primary', () => {
     const collected = customers.collect();
     if (!collected) return;
+    walkthrough.collectPayment();
     sound.play('cash');
     flashCash(collected);
     syncHud();
@@ -996,6 +1003,11 @@ nameForm.addEventListener('submit', event => {
   requestPlay();
 });
 select('resume').addEventListener('click', requestPlay);
+walkthroughToggle.addEventListener('click', () => {
+  walkthrough.toggle();
+  syncWalkthrough();
+  saveProgress();
+});
 
 function updateHudAndDesk(dt) {
   if (shopOpenTimer > 0) {
@@ -1068,6 +1080,15 @@ function updateHudAndDesk(dt) {
   }
 }
 
+function syncWalkthrough() {
+  walkthrough.update(state);
+  const goal = walkthrough.goal;
+  walkthroughHint.hidden = !goal || !['play', 'desk'].includes(mode);
+  if (walkthroughHint.textContent !== goal) walkthroughHint.textContent = goal;
+  const toggleLabel = goal ? 'Rehberi atla' : 'İlk müşteri rehberini aç';
+  if (walkthroughToggle.textContent !== toggleLabel) walkthroughToggle.textContent = toggleLabel;
+}
+
 function frame(timestamp) {
   requestAnimationFrame(frame);
   const dt = lastTime === null ? 0 : Math.min((timestamp - lastTime) / 1000, 0.05);
@@ -1110,6 +1131,7 @@ function frame(timestamp) {
   }
   state.advance(dt);
   updateHudAndDesk(dt);
+  syncWalkthrough();
   saveElapsed += dt;
   if (saveElapsed >= 2) {
     saveElapsed = 0;

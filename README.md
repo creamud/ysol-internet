@@ -40,6 +40,8 @@ npm run dev
 
 [Oyunu](http://127.0.0.1:5173/) veya [sahne galerisini](http://127.0.0.1:5173/galeri.html) aç. Sonraki oturumlarda `npm run dev` yeterli.
 
+Kayıt, rehber, ödeme ve sürüş testlerini `npm test` ile çalıştır.
+
 ## Otomatik kayıt
 
 Oyun kafe adını, paranı, saati, aldığın eşyaları, siparişlerini ve aktif seansları tarayıcı profiline otomatik kaydeder. Aynı adresi aynı tarayıcı profiliyle yeniden açınca **Devam et** düğmesiyle oyuna dönebilirsin. Kayıtlar cihazlar arasında eşitlenmez. Site verilerini silmek ilerlemeni siler.

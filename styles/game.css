@@ -42,6 +42,8 @@ button{cursor:pointer;border:1px solid transparent;border-radius:22px;padding:10
 #overlay.paused-view{place-items:center;padding:0;background:#101321a8;backdrop-filter:blur(3px)}
 #pause-screen{color:#fff;text-align:center}#pause-title{font-size:clamp(32px,7vw,76px);letter-spacing:.09em;text-shadow:0 4px 28px #1119}
 .pause-icons{display:flex;justify-content:center;gap:12px}.pause-icons button{font-size:17px;border-radius:100%;min-width:42px;min-height:42px;justify-content:center;padding:0;color:#24334e}
+#walkthrough-toggle{margin:14px auto 0;color:#24334e;border-radius:14px}
+#walkthrough-hint{position:fixed;left:clamp(12px,3vw,32px);bottom:76px;z-index:4;margin:0;width:max-content;max-width:min(320px,calc(100% - 24px));padding:10px 14px;border-radius:16px;pointer-events:none;font-size:13px;font-weight:650}
 #phone-trigger{position:fixed;right:20px;bottom:18px;z-index:4;padding:0;justify-content:center;border-radius:14px;width:44px;min-height:44px;font-size:27px;color:#213752}
 #overlay.phone-view{place-items:end end;padding:18px 22px 76px;background:#09152845}
 #phone{position:relative;cursor:default;width:min(300px,90vw);height:min(525px,calc(100dvh - 104px));overflow:hidden;display:flex;flex-direction:column;gap:8px;border:7px solid #15171b;border-radius:40px;padding:12px 13px 0;background:radial-gradient(ellipse at 16% 20%,#c4bcf5 0%,transparent 62%),radial-gradient(ellipse at 75% 90%,#5879c9 0%,#283a79 68%);box-shadow:0 20px 50px #11183d6b;color:#fff}
