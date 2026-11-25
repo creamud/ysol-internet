@@ -1,3 +1,4 @@
+import { readProgress, readSettings, writeProgress, writeSettings } from './storage.js';
 import { createArcade } from './arcade.js';
 import { channels } from './television.js';
 import * as THREE from '../vendor/three.module.js';
@@ -29,26 +30,12 @@ const music = select('music-volume');
 const sound = createSound();
 const computer = select('computer');
 const canvas = () => renderer.domElement;
-const preferenceKey = 'ysol-internet-controls-v1';
-const progressKey = 'ysol-internet-progress-v1';
-let savedProgress = null;
-try {
-  const save = JSON.parse(localStorage.getItem(progressKey));
-  if (save?.version === 1 && Number.isFinite(save.state?.absoluteTime) &&
-      typeof save.state.cafeName === 'string' && Array.isArray(save.state.stations) &&
-      save.shop && save.scene && save.customers && Array.isArray(save.player?.feet)) savedProgress = save;
-} catch {
-  // A new game is available when progress cannot be read.
-}
-try {
-  const saved = JSON.parse(localStorage.getItem(preferenceKey));
-  if (Number.isFinite(saved?.sensitivity)) sensitivity.value = saved.sensitivity;
-  invertY.checked = saved?.invertY === true;
-  if (Number.isFinite(saved?.volume)) volume.value = saved.volume;
-  if (Number.isFinite(saved?.music)) music.value = saved.music;
-} catch {
-  // The browser can restrict storage for local HTML files.
-}
+const savedProgress = readProgress();
+const savedSettings = readSettings();
+if (Number.isFinite(savedSettings?.sensitivity)) sensitivity.value = savedSettings.sensitivity;
+invertY.checked = savedSettings?.invertY === true;
+if (Number.isFinite(savedSettings?.volume)) volume.value = savedSettings.volume;
+if (Number.isFinite(savedSettings?.music)) music.value = savedSettings.music;
 const clock = select('clock');
 const day = select('day');
 const cash = select('cash');
@@ -160,17 +147,13 @@ const movementKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'Shif
 
 function saveProgress() {
   if (mode === 'naming') return;
-  try {
-    localStorage.setItem(progressKey, JSON.stringify({
-      version: 1, state: state.snapshot(), shop: shop.snapshot(), scene: cafe.snapshot(),
-      customers: customers.snapshot(),
-      player: { feet: player.feet.toArray(), yaw: player.yaw, pitch: player.pitch, home, coffee,
-        batEquipped, driving: drivingController.active },
-      television: { channel, tvTime },
-    }));
-  } catch {
-    // Gameplay remains available when browser storage is disabled or full.
-  }
+  writeProgress(() => ({
+    state: state.snapshot(), shop: shop.snapshot(), scene: cafe.snapshot(),
+    customers: customers.snapshot(),
+    player: { feet: player.feet.toArray(), yaw: player.yaw, pitch: player.pitch, home, coffee,
+      batEquipped, driving: drivingController.active },
+    television: { channel, tvTime },
+  }));
 }
 
 function restoreProgress(save) {
@@ -270,16 +253,12 @@ function syncSettings() {
 
 function saveSettings() {
   syncSettings();
-  try {
-    localStorage.setItem(preferenceKey, JSON.stringify({
-      sensitivity: Number(sensitivity.value),
-      invertY: invertY.checked,
-      volume: Number(volume.value),
-      music: Number(music.value),
-    }));
-  } catch {
-    // Settings still apply for the current game.
-  }
+  writeSettings({
+    sensitivity: Number(sensitivity.value),
+    invertY: invertY.checked,
+    volume: Number(volume.value),
+    music: Number(music.value),
+  });
 }
 
 function look(dx, dy) {
