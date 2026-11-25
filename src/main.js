@@ -1,3 +1,4 @@
+import { createGamepadInput, navigateGamepadMenu } from './gamepad.js';
 import { createWalkthrough } from './walkthrough.js';
 import { readProgress, readSettings, writeProgress, writeSettings } from './storage.js';
 import { createArcade } from './arcade.js';
@@ -21,6 +22,9 @@ const nameForm = select('name-form');
 const nameError = select('name-error');
 const aim = select('aim');
 const prompt = select('prompt');
+const readGamepad = createGamepadInput();
+let lastInput = 'keyboard';
+let gamepadSession = false;
 const updateActionHint = createActionHint(select('action-hint'));
 const settings = select('settings');
 const settingsOpen = select('settings-open');
@@ -100,6 +104,7 @@ let lastStride = 0;
 let pendingLock = false;
 let lockTimer = 0;
 const driveControls = select('drive-controls');
+const driveShortcuts = select('drive-shortcuts');
 const drivingController = createDriving({
   player, camera, shadowMap: renderer.shadowMap, driveSpeed: select('drive-speed'), setMode, sound,
 });
@@ -225,7 +230,7 @@ function setMode(next) {
   aim.hidden = !playing;
   viewport.classList.toggle('playing', playing || driving);
   prompt.hidden = true;
-  updateActionHint(playing ? { coffee, movingFurniture, packageKind: shop.carried?.kind } : {});
+  updateActionHint(playing ? { coffee, movingFurniture, packageKind: shop.carried?.kind, gamepad: lastInput === 'gamepad' } : {});
   aim.classList.remove('target');
   target = null;
   previousLabel = '';
@@ -285,8 +290,21 @@ function lockFailed() {
   else select('resume').title = 'Fare kilidi açılamadı · Tekrar dene';
 }
 
+function finishNaming() {
+  state.cafeName = cafeNameInput.value.trim().slice(0,26);
+  select('cafe-brand').textContent = state.cafeName;
+  cafe.renameCafe();
+}
+
 function requestPlay() {
   sound.unlock();
+  if (lastInput === 'gamepad') {
+    if (mode === 'naming') finishNaming();
+    gamepadSession = true;
+    if (mode !== 'standing') setMode(drivingController.active ? 'driving' : 'play');
+    return;
+  }
+  gamepadSession = false;
   if (document.pointerLockElement === canvas()) {
     if (mode !== 'standing') setMode(drivingController.active ? 'driving' : 'play');
     return;
@@ -305,11 +323,7 @@ document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement === canvas()) {
     pendingLock = false;
     clearTimeout(lockTimer);
-    if (mode === 'naming') {
-      state.cafeName = cafeNameInput.value.trim().slice(0,26);
-      select('cafe-brand').textContent = state.cafeName;
-      cafe.renameCafe();
-    }
+    if (mode === 'naming') finishNaming();
     if (mode === 'phone' && phoneClosing) {
       phoneClosing = false;
       setMode('play');
@@ -320,8 +334,17 @@ document.addEventListener('pointerlockchange', () => {
   }
 });
 document.addEventListener('pointerlockerror', lockFailed);
+window.addEventListener('pointerdown', event => {
+  if (event.isTrusted) lastInput = 'keyboard';
+});
+viewport.addEventListener('click', event => {
+  if (event.isTrusted && gamepadSession && ['play', 'driving'].includes(mode)) requestPlay();
+});
 document.addEventListener('mousemove', event => {
-  if (mode === 'play' && document.pointerLockElement === canvas()) look(event.movementX, event.movementY);
+  if (mode === 'play' && document.pointerLockElement === canvas() && (event.movementX || event.movementY)) {
+    lastInput = 'keyboard';
+    look(event.movementX, event.movementY);
+  }
 });
 window.addEventListener('blur', () => {
   if (mode === 'play' || mode === 'driving') setMode('pause');
@@ -735,7 +758,7 @@ function animateSeat(dt) {
   } else {
     if (pendingLock) return;
     player.syncCamera();
-    setMode(document.pointerLockElement === canvas() ? 'play' : 'pause');
+    setMode(gamepadSession || document.pointerLockElement === canvas() ? 'play' : 'pause');
   }
 }
 
@@ -915,52 +938,41 @@ canvas().addEventListener('mousedown', event => {
   }
 });
 
-window.addEventListener('keydown', event => {
-  if (event.code === 'Escape' && !event.repeat) {
-    if (mode === 'desk') leaveSeat(false);
-    else if (mode === 'tv') leaveSeat(false);
+const keyboardActions = {
+  Escape: 'pause', KeyP: 'phone', KeyE: 'interact', KeyC: 'drink',
+  KeyG: 'moveFurniture', KeyR: 'rotate', Space: 'jump',
+};
+
+function performAction(action) {
+  if (action === 'pause') {
+    if (mode === 'desk' || mode === 'tv') leaveSeat(false);
     else if (mode === 'phone') { phoneClosing = false; if (phoneOrigin === 'desk') openPhone(); else setMode('pause'); }
     else if (mode === 'settings' || mode === 'play' || mode === 'driving') setMode('pause');
+    else if (mode === 'pause' && lastInput === 'gamepad') requestPlay();
     return;
   }
   if (mode === 'driving') {
-    if (driveKeys.has(event.code)) {
-      event.preventDefault();
-      player.keys.add(event.code);
-    } else if (event.code === 'KeyE' && !event.repeat) {
-      event.preventDefault();
-      drivingController.leave();
-    }
+    if (action === 'interact') drivingController.leave();
     return;
   }
-  if (event.code === 'KeyP' && !event.repeat && ['play','pause','phone','desk'].includes(mode)) {
+  if (action === 'phone') {
     openPhone();
     return;
   }
-  if ((mode === 'desk' || mode === 'tv') && event.code === 'KeyE' && !event.repeat) {
-    event.preventDefault();
+  if (action === 'interact' && (mode === 'desk' || mode === 'tv')) {
     leaveSeat(true);
     return;
   }
-  if (mode === 'desk' && arcade?.key(event.code)) { event.preventDefault(); return; }
-  if (mode === 'tv' && ['ArrowLeft','ArrowRight'].includes(event.code)) {
-    event.preventDefault();
-    switchChannel(event.code === 'ArrowLeft' ? -1 : 1);
-    return;
-  }
   if (mode !== 'play') return;
-  if (movementKeys.has(event.code) || event.code === 'KeyE') event.preventDefault();
-  if (movementKeys.has(event.code)) player.keys.add(event.code);
-  if (event.repeat) return;
-  if (event.code === 'KeyE') interact();
-  if (event.code === 'KeyC' && coffee) {
+  if (action === 'interact') interact();
+  if (action === 'drink' && coffee) {
     coffee = false;
     const previousEnergy = state.energy;
     state.drinkCoffee();
     flashEnergy(previousEnergy, true);
     sound.play('sip');
   }
-  if (event.code === 'KeyG') {
+  if (action === 'moveFurniture') {
     if (movingFurniture) {
       movingFurniture = null;
       cafe.previewDesk(null);
@@ -972,8 +984,42 @@ window.addEventListener('keydown', event => {
       deskAngle = item.slot.angle;
     }
   }
-  if (event.code === 'KeyR' && (movingFurniture || (shop.carried && shop.carried.kind !== 'pc'))) deskAngle = (deskAngle + Math.PI / 2) % (Math.PI * 2);
-  if (event.code === 'Space') player.jump();
+  if (action === 'rotate' && (movingFurniture || (shop.carried && shop.carried.kind !== 'pc'))) deskAngle = (deskAngle + Math.PI / 2) % (Math.PI * 2);
+  if (action === 'jump') player.jump();
+}
+
+window.addEventListener('keydown', event => {
+  lastInput = 'keyboard';
+  const action = keyboardActions[event.code];
+  if (action === 'pause' || (action === 'phone' && mode !== 'driving')) {
+    if (!event.repeat) performAction(action);
+    return;
+  }
+  if (mode === 'driving') {
+    if (driveKeys.has(event.code)) {
+      event.preventDefault();
+      player.keys.add(event.code);
+    } else if (action === 'interact' && !event.repeat) {
+      event.preventDefault();
+      performAction(action);
+    }
+    return;
+  }
+  if (action === 'interact' && (mode === 'desk' || mode === 'tv') && !event.repeat) {
+    event.preventDefault();
+    performAction(action);
+    return;
+  }
+  if (mode === 'desk' && arcade?.key(event.code)) { event.preventDefault(); return; }
+  if (mode === 'tv' && ['ArrowLeft','ArrowRight'].includes(event.code)) {
+    event.preventDefault();
+    switchChannel(event.code === 'ArrowLeft' ? -1 : 1);
+    return;
+  }
+  if (mode !== 'play') return;
+  if (movementKeys.has(event.code) || action === 'interact') event.preventDefault();
+  if (movementKeys.has(event.code)) player.keys.add(event.code);
+  if (!event.repeat && action) performAction(action);
 });
 window.addEventListener('keyup', event => player.keys.delete(event.code));
 window.addEventListener('resize', resize);
@@ -1082,17 +1128,52 @@ function updateHudAndDesk(dt) {
 
 function syncWalkthrough() {
   walkthrough.update(state);
-  const goal = walkthrough.goal;
+  const goal = lastInput === 'gamepad' ? walkthrough.goal.replaceAll('E ile', 'X / □ ile') : walkthrough.goal;
   walkthroughHint.hidden = !goal || !['play', 'desk'].includes(mode);
   if (walkthroughHint.textContent !== goal) walkthroughHint.textContent = goal;
   const toggleLabel = goal ? 'Rehberi atla' : 'İlk müşteri rehberini aç';
   if (walkthroughToggle.textContent !== toggleLabel) walkthroughToggle.textContent = toggleLabel;
 }
 
+function updateGamepad(dt) {
+  const input = readGamepad();
+  if (!input) {
+    if (lastInput === 'gamepad') lastInput = 'keyboard';
+    if (gamepadSession) {
+      gamepadSession = false;
+      if ((mode === 'play' || mode === 'driving') && document.pointerLockElement !== canvas()) setMode('pause');
+    }
+    return null;
+  }
+  if (!document.hasFocus()) return null;
+  if (input.active) lastInput = 'gamepad';
+  const { pressed } = input;
+  if (pressed.pause) performAction('pause');
+  else if (pressed.phone) performAction('phone');
+  else if (pressed.back && mode === 'phone') {
+    if (phonePage === 'app') select('phone-app-back').click();
+    else performAction('phone');
+  } else if (pressed.back) performAction('pause');
+  else if (pressed.interact) performAction('interact');
+  else if (mode === 'play') {
+    if (pressed.confirm) performAction('jump');
+    for (const action of ['drink', 'rotate', 'moveFurniture']) {
+      if (pressed[action]) performAction(action);
+    }
+  } else if (mode === 'naming' && pressed.confirm && cafeNameInput.value.trim()) nameForm.requestSubmit();
+  else {
+    const menus = { pause: 'pause-screen', settings: 'settings', phone: 'phone', desk: 'computer', tv: 'tv-remote' };
+    if (menus[mode]) navigateGamepadMenu(select(menus[mode]), pressed);
+  }
+  if (mode === 'play' && (input.lookX || input.lookY)) look(input.lookX * 950 * dt, input.lookY * 950 * dt);
+  return input;
+}
+
 function frame(timestamp) {
   requestAnimationFrame(frame);
   const dt = lastTime === null ? 0 : Math.min((timestamp - lastTime) / 1000, 0.05);
   lastTime = timestamp;
+  const gamepad = updateGamepad(dt);
   if (mode === 'sitting' || mode === 'standing') animateSeat(dt);
   if (!['play','driving','desk','tv','phone','sitting','standing'].includes(mode)) return;
   if (mode === 'desk') arcade?.update(dt);
@@ -1101,11 +1182,17 @@ function frame(timestamp) {
   if (mode === 'phone') syncPhoneClock();
   else select('phone-trigger').classList.toggle('bank-pending',shop.pending);
   sound.updateMusic(true);
-  if (mode === 'driving') drivingController.update(dt);
+  if (mode === 'driving') {
+    const shortcuts = lastInput === 'gamepad'
+      ? 'Sol çubuk · RT / R2 ileri · LT / L2 geri · A / × fren · X / □ in'
+      : 'W A S D sür · Space fren · E in';
+    if (driveShortcuts.textContent !== shortcuts) driveShortcuts.textContent = shortcuts;
+    drivingController.update(dt, false, gamepad);
+  }
   if (mode === 'play') {
     player.energyFactor = 0.65 + state.energy * 0.0035;
-    updateActionHint({ coffee, movingFurniture, packageKind: shop.carried?.kind });
-    player.update(dt);
+    updateActionHint({ coffee, movingFurniture, packageKind: shop.carried?.kind, gamepad: lastInput === 'gamepad' });
+    player.update(dt, gamepad);
     const kind = movingFurniture?.kind ?? shop.carried?.kind;
     candidate = cafe.previewDesk(kind === 'desk' || decor[kind] ? camera : null, player, deskAngle, kind, movingFurniture);
     if (player.verticalSpeed === 0 && player.stride - lastStride > 3.9) {
@@ -1147,11 +1234,16 @@ function frame(timestamp) {
         : shop.carried && candidate ? 'Yerleştir · R döndür'
         : target?.furniture ? `${target.label?.() ?? catalog[target.furniture.kind].name} · G taşı`
         : target?.label() ?? '';
-      if (label !== previousLabel) {
-        prompt.querySelector('span').textContent = label;
+      const gamepadPrompt = lastInput === 'gamepad';
+      const promptKey = prompt.querySelector('kbd');
+      const shortcut = gamepadPrompt ? 'X / □' : 'E';
+      if (promptKey.textContent !== shortcut) promptKey.textContent = shortcut;
+      const visibleLabel = gamepadPrompt ? label.replaceAll(' · R ', ' · LB / L1 ').replaceAll(' · G ', ' · RB / R1 ') : label;
+      if (visibleLabel !== previousLabel) {
+        prompt.querySelector('span').textContent = visibleLabel;
         prompt.hidden = !label;
         aim.classList.toggle('target', !!label);
-        previousLabel = label;
+        previousLabel = visibleLabel;
       }
     }
   }

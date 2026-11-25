@@ -44,11 +44,11 @@ export class Player {
       overlapsCollider(x, z, collider));
   }
 
-  update(dt) {
+  update(dt, input) {
     const { feet, keys, velocity } = this;
-    const forward = Number(keys.has('KeyW')) - Number(keys.has('KeyS'));
-    const right = Number(keys.has('KeyD')) - Number(keys.has('KeyA'));
-    const speed = (this.energyFactor ?? 1) * (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 4.6 : 2.65);
+    const forward = input?.forward || (Number(keys.has('KeyW')) - Number(keys.has('KeyS')));
+    const right = input?.right || (Number(keys.has('KeyD')) - Number(keys.has('KeyA')));
+    const speed = (this.energyFactor ?? 1) * (input?.sprint || keys.has('ShiftLeft') || keys.has('ShiftRight') ? 4.6 : 2.65);
     const scale = speed / Math.max(1, Math.hypot(forward, right));
     const cos = Math.cos(this.yaw);
     const sin = Math.sin(this.yaw);

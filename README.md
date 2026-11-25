@@ -29,6 +29,18 @@ YSOL INTERNET, kendi internet kafeni işlettiğin birinci şahıs 3D simülasyon
 | Space | Zıpla veya araçla fren yap |
 | Esc | Duraklat |
 
+Standart eşlemeli Xbox ve PlayStation kumandalarında sol çubuk hareket, sağ çubuk bakış içindir. Menüde yön tuşlarıyla dolaş, A / × ile onayla ve B / ○ ile geri dön.
+
+| Kumanda | İşlev |
+| --- | --- |
+| X / □ | Etkileşim veya araçtan in |
+| A / × | Zıpla veya araçla fren yap |
+| Y / △ | Kahveyi iç |
+| LB / L1, RB / R1 | Eşyayı döndür, taşı veya taşımayı iptal et |
+| View / Create | Telefon |
+| Menu / Options | Duraklat veya devam et |
+| RT / R2, LT / L2 | İleri ve geri gaz |
+
 ## Yerelde çalıştırma
 
 Node.js 20.19+ veya 22.12+ ile proje kökünde bağımlılıkları kur ve Vite'ı başlat.
@@ -46,4 +58,4 @@ Kayıt, rehber, ödeme ve sürüş testlerini `npm test` ile çalıştır.
 
 Oyun kafe adını, paranı, saati, aldığın eşyaları, siparişlerini ve aktif seansları tarayıcı profiline otomatik kaydeder. Aynı adresi aynı tarayıcı profiliyle yeniden açınca **Devam et** düğmesiyle oyuna dönebilirsin. Kayıtlar cihazlar arasında eşitlenmez. Site verilerini silmek ilerlemeni siler.
 
-Masaüstü tarayıcı, WebGL ve fare kilidi gerekir. Oyun Three.js ile çalışır.
+Masaüstü tarayıcı ve WebGL gerekir. Fareyle bakış için fare kilidi kullanılır. Oyun Three.js ile çalışır.

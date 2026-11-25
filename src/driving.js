@@ -7,12 +7,12 @@ export function createDriving({ player, camera, shadowMap, driveSpeed, setMode, 
   let vehicleSpeed = 0;
   const chaseCameraPosition = new THREE.Vector3();
 
-  function updateDriving(dt, snapCamera = false) {
+  function updateDriving(dt, snapCamera = false, input) {
     const { car } = vehicle;
-    const throttle = Number(player.keys.has('KeyW')) - Number(player.keys.has('KeyS'));
-    const steer = Number(player.keys.has('KeyA')) - Number(player.keys.has('KeyD'));
-    const braking = player.keys.has('Space');
-    const targetSpeed = braking ? 0 : throttle > 0 ? 11.5 : throttle < 0 ? -4.2 : 0;
+    const throttle = input?.throttle || (Number(player.keys.has('KeyW')) - Number(player.keys.has('KeyS')));
+    const steer = -(input?.right ?? 0) || (Number(player.keys.has('KeyA')) - Number(player.keys.has('KeyD')));
+    const braking = input?.brake || player.keys.has('Space');
+    const targetSpeed = braking ? 0 : throttle * (throttle >= 0 ? 11.5 : 4.2);
     vehicleSpeed = THREE.MathUtils.lerp(vehicleSpeed, targetSpeed, 1 - Math.exp(-(braking ? 9 : 2.5) * dt));
     if (Math.abs(vehicleSpeed) < 0.025) vehicleSpeed = 0;
     const yaw = car.rotation.y + steer * THREE.MathUtils.clamp(vehicleSpeed / 3.5, -0.85, 1) * 1.42 * dt;

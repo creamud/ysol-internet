@@ -3,17 +3,25 @@ const cancelMove = ['G', 'Taşımayı iptal et'];
 const installComputer = ['E', 'Uygun masaya kur'];
 const rotatePackage = ['R', 'Yerleştirmeden önce döndür'];
 
+const gamepadActions = new Map([
+  [drinkCoffee, ['Y / △', 'Kahveyi iç']],
+  [cancelMove, ['RB / R1', 'Taşımayı iptal et']],
+  [installComputer, ['X / □', 'Uygun masaya kur']],
+  [rotatePackage, ['LB / L1', 'Yerleştirmeden önce döndür']],
+]);
+
 export function createActionHint(element) {
   const key = element.querySelector('kbd');
   const label = element.querySelector('span');
   let current = null;
 
-  return function update({ coffee, movingFurniture, packageKind }) {
-    const action = coffee ? drinkCoffee
+  return function update({ coffee, movingFurniture, packageKind, gamepad }) {
+    let action = coffee ? drinkCoffee
       : movingFurniture ? cancelMove
       : packageKind === 'pc' ? installComputer
       : packageKind ? rotatePackage
       : null;
+    if (gamepad && action) action = gamepadActions.get(action);
     if (action === current) return;
     current = action;
     element.hidden = !action;
