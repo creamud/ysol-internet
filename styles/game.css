@@ -32,7 +32,8 @@ button{cursor:pointer;border:1px solid transparent;border-radius:22px;padding:10
 #cash-gain{left:6px}#energy-gain{right:0}
 @keyframes cash-rise{0%{opacity:0;transform:translateY(7px)}15%,65%{opacity:1}100%{opacity:0;transform:translateY(-14px)}}
 .shop-hero{background:linear-gradient(110deg,#332469,#5960bd);color:#fff;border-radius:13px;padding:12px 15px;margin-bottom:8px}.shop-hero strong{font-size:21px;letter-spacing:-.035em}.shop-hero p{color:#e8e5ff;font-size:12px}.product-tile{display:flex;align-items:center;gap:10px}.product-art{display:grid;place-items:center;width:61px;height:55px;border-radius:12px;background:#eeeafa;font-size:32px;flex:none}.product-tile p{margin-top:2px}.shop-line .product-tile{min-width:0}
-#hud{z-index:2}#overlay{z-index:3}#prompt,#aim{z-index:2}
+#hud{z-index:2}#overlay{z-index:3}#prompt,#aim,#action-hint{z-index:2}
+#action-hint{position:fixed;left:50%;bottom:max(24px,env(safe-area-inset-bottom));transform:translateX(-50%);max-width:calc(100% - 24px);display:flex;align-items:center;gap:9px;padding:7px 13px 7px 8px;border-radius:24px;pointer-events:none;font-size:13px;font-weight:650}
 #sleep-fade{position:fixed;inset:0;z-index:8;background:#111829;opacity:0;pointer-events:none}
 #sleep-fade.sleeping{animation:wake-up 1.45s ease-in-out both}
 @keyframes wake-up{0%{opacity:0}20%,43%{opacity:1}100%{opacity:0}}

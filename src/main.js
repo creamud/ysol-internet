@@ -7,6 +7,8 @@ import { clockRate, createCafeState, foodPrice } from './state.js';
 import { createCustomerLoop } from './customer.js';
 import { carPrice, catalog, createShop, decor } from './shop.js';
 import { createShopUi, shippingText } from './shop-ui.js';
+import { createDriving, driveKeys } from './driving.js';
+import { createActionHint } from './action-hint.js';
 import { createSound } from './sound.js';
 
 const select = id => document.getElementById(id);
@@ -17,6 +19,7 @@ const nameForm = select('name-form');
 const nameError = select('name-error');
 const aim = select('aim');
 const prompt = select('prompt');
+const updateActionHint = createActionHint(select('action-hint'));
 const settings = select('settings');
 const settingsOpen = select('settings-open');
 const sensitivity = select('sensitivity');
@@ -105,12 +108,10 @@ let batEquipped = false;
 let lastStride = 0;
 let pendingLock = false;
 let lockTimer = 0;
-let vehicle = null;
-let vehicleSpeed = 0;
-const driveSpeed = select('drive-speed');
-const chaseCameraPosition = new THREE.Vector3();
 const driveControls = select('drive-controls');
-const driveKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space']);
+const drivingController = createDriving({
+  player, camera, shadowMap: renderer.shadowMap, driveSpeed: select('drive-speed'), setMode, sound,
+});
 let target = null;
 let energyGainTimer = 0;
 let shopOpenTimer = 0;
@@ -164,7 +165,7 @@ function saveProgress() {
       version: 1, state: state.snapshot(), shop: shop.snapshot(), scene: cafe.snapshot(),
       customers: customers.snapshot(),
       player: { feet: player.feet.toArray(), yaw: player.yaw, pitch: player.pitch, home, coffee,
-        batEquipped, driving: Boolean(vehicle) },
+        batEquipped, driving: drivingController.active },
       television: { channel, tvTime },
     }));
   } catch {
@@ -187,8 +188,7 @@ function restoreProgress(save) {
   player.yaw = save.player.yaw;
   player.pitch = save.player.pitch;
   if (save.player.driving && cafe.ownedCar) {
-    vehicle = cafe.ownedCar;
-    updateDriving(0, true);
+    drivingController.restore(cafe.ownedCar);
   } else {
     player.syncCamera();
     camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
@@ -237,6 +237,7 @@ function setMode(next) {
   aim.hidden = !playing;
   viewport.classList.toggle('playing', playing || driving);
   prompt.hidden = true;
+  updateActionHint(playing ? { coffee, movingFurniture, packageKind: shop.carried?.kind } : {});
   aim.classList.remove('target');
   target = null;
   previousLabel = '';
@@ -303,7 +304,7 @@ function lockFailed() {
 function requestPlay() {
   sound.unlock();
   if (document.pointerLockElement === canvas()) {
-    if (mode !== 'standing') setMode(vehicle ? 'driving' : 'play');
+    if (mode !== 'standing') setMode(drivingController.active ? 'driving' : 'play');
     return;
   }
   if (pendingLock) return;
@@ -328,7 +329,7 @@ document.addEventListener('pointerlockchange', () => {
     if (mode === 'phone' && phoneClosing) {
       phoneClosing = false;
       setMode('play');
-    } else if (mode === 'naming' || mode === 'pause') setMode(vehicle ? 'driving' : 'play');
+    } else if (mode === 'naming' || mode === 'pause') setMode(drivingController.active ? 'driving' : 'play');
     else if (mode !== 'play' && mode !== 'driving' && mode !== 'standing') document.exitPointerLock();
   } else if (mode === 'play' || mode === 'driving') {
     setMode('pause');
@@ -787,66 +788,6 @@ function enterOrLeaveHome() {
   sound.play('apartmentDoor');
 }
 
-function updateDriving(dt, snapCamera = false) {
-  const { car } = vehicle;
-  const throttle = Number(player.keys.has('KeyW')) - Number(player.keys.has('KeyS'));
-  const steer = Number(player.keys.has('KeyA')) - Number(player.keys.has('KeyD'));
-  const braking = player.keys.has('Space');
-  const targetSpeed = braking ? 0 : throttle > 0 ? 11.5 : throttle < 0 ? -4.2 : 0;
-  vehicleSpeed = THREE.MathUtils.lerp(vehicleSpeed, targetSpeed, 1 - Math.exp(-(braking ? 9 : 2.5) * dt));
-  if (Math.abs(vehicleSpeed) < 0.025) vehicleSpeed = 0;
-  const yaw = car.rotation.y + steer * THREE.MathUtils.clamp(vehicleSpeed / 3.5, -0.85, 1) * 1.42 * dt;
-  const x = car.position.x - Math.cos(yaw) * vehicleSpeed * dt;
-  const z = car.position.z + Math.sin(yaw) * vehicleSpeed * dt;
-  if (vehicleSpeed !== 0) {
-    if (!vehicle.move(x, z, yaw)) vehicleSpeed = 0;
-    else renderer.shadowMap.needsUpdate = true;
-  }
-  player.feet.copy(car.position);
-  const c = Math.cos(car.rotation.y);
-  const s = Math.sin(car.rotation.y);
-  chaseCameraPosition.set(car.position.x + c * 4.5, 2.75, car.position.z - s * 4.5);
-  camera.position.lerp(chaseCameraPosition, snapCamera ? 1 : 1 - Math.exp(-12 * dt));
-  camera.lookAt(car.position.x - c * 1.15, 0.75, car.position.z + s * 1.15);
-  const speedLabel = `${Math.round(Math.abs(vehicleSpeed) * 3.6)} km/sa`;
-  if (driveSpeed.textContent !== speedLabel) driveSpeed.textContent = speedLabel;
-}
-
-function enterCar(target) {
-  vehicle = target;
-  vehicleSpeed = 0;
-  player.stop();
-  player.verticalSpeed = 0;
-  setMode('driving');
-  updateDriving(0, true);
-  sound.play('boot');
-}
-
-function leaveCar() {
-  if (Math.abs(vehicleSpeed) > 0.6) return;
-  const { car } = vehicle;
-  const yaw = car.rotation.y;
-  const c = Math.cos(yaw);
-  const s = Math.sin(yaw);
-  const exitOffsets = [[0, 1.24], [0, -1.24], [2, 0], [-2, 0]];
-  for (const [along, side] of exitOffsets) {
-    const x = car.position.x + c * along + s * side;
-    const z = car.position.z - s * along + c * side;
-    if (player.blocked(x, z)) continue;
-    vehicle = null;
-    vehicleSpeed = 0;
-    player.stop();
-    player.feet.set(x, 0, z);
-    player.yaw = Math.atan2(c, -s);
-    player.pitch = -0.05;
-    player.bob = 0;
-    player.syncCamera();
-    camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
-    setMode('play');
-    return;
-  }
-}
-
 function interact() {
   target = cafe.findTarget(camera);
   const kind = shop.carried?.kind;
@@ -872,7 +813,7 @@ function interact() {
   if (!target) return;
   switch (target.type) {
     case 'owned-car':
-      enterCar(target);
+      drivingController.enter(target);
       return;
     case 'business':
       state.open = !state.open;
@@ -1002,7 +943,7 @@ window.addEventListener('keydown', event => {
       player.keys.add(event.code);
     } else if (event.code === 'KeyE' && !event.repeat) {
       event.preventDefault();
-      leaveCar();
+      drivingController.leave();
     }
     return;
   }
@@ -1160,9 +1101,10 @@ function frame(timestamp) {
   if (mode === 'phone') syncPhoneClock();
   else select('phone-trigger').classList.toggle('bank-pending',shop.pending);
   sound.updateMusic(true);
-  if (mode === 'driving') updateDriving(dt);
+  if (mode === 'driving') drivingController.update(dt);
   if (mode === 'play') {
     player.energyFactor = 0.65 + state.energy * 0.0035;
+    updateActionHint({ coffee, movingFurniture, packageKind: shop.carried?.kind });
     player.update(dt);
     const kind = movingFurniture?.kind ?? shop.carried?.kind;
     candidate = cafe.previewDesk(kind === 'desk' || decor[kind] ? camera : null, player, deskAngle, kind, movingFurniture);
